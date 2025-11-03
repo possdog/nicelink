@@ -1,0 +1,8 @@
+# User-specific ST files
+*.sublime-workspace
+
+# Database file
+*.redb
+
+# Added by cargo
+/target
