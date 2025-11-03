@@ -98,7 +98,7 @@ async fn main() {
         .route("/{alias}", get(redirect_link))
         .with_state(db);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 80));
     println!("Listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
