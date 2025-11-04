@@ -3,9 +3,9 @@
 A little baby link shortener. Zero trackers.
 
 ## Usage
-It is planned to provide a dead simple web frontend, but in the meantime:
+Use the web frontend at [t.l.lc](https://t.l.lc/), or make a POST request:
 ```
-curl -X POST 'http://t.l.lc/?url=https://example.com/'
+curl -X POST 'https://t.l.lc/?url=https://example.com/'
 ```
 
 ## Building

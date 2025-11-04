@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>t.l.lc — link shortener</title>
+    <style>
+      body {
+        font-family: sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    t(iny).l(ink).lc — zero-tracking link shortener
+
+    <br>
+
+    <!-- Target URL (required) -->
+    <input
+      id="url"
+      type="url"
+      placeholder="target url"
+      required
+    >
+
+    <br>
+
+    <!-- Custom alias (optional) -->
+    <input
+      id="alias"
+      type="text"
+      placeholder="custom link (optional)"
+    >
+
+    <br>
+
+    <button onclick="shorten()">submit</button>
+
+    <!-- Result display -->
+    <div id="result" onclick="copyResult(this)"></div>
+
+    <script>
+      async function shorten() {
+        const url = document.getElementById("url").value.trim();
+        const alias = document.getElementById("alias").value.trim();
+        if (!url) return alert("URL is required");
+
+        const params = new URLSearchParams({ url });
+        if (alias) params.append("alias", alias);
+
+        const res = await fetch(`/?${params}`, { method: "POST" });
+        const data = await res.json().catch(() => null);
+        const out = document.getElementById("result");
+
+        if (res.ok && data?.short_link) {
+          out.textContent = `${location.origin}${data.short_link}`;
+        } else {
+          out.textContent = "Error: " +
+            (data?.detail || res.statusText);
+        }
+      }
+
+      // Copy text inside the result element to clipboard
+      async function copyResult(el) {
+        if (!el.textContent) return;
+        await navigator.clipboard.writeText(el.textContent);
+        alert("Copied to clipboard!");
+      }
+    </script>
+  </body>
+</html>

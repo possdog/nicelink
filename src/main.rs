@@ -1,12 +1,11 @@
 // Minimal link-shortener in Rust: Axum + redb.
-// Listens on 80 (HTTP) or 443 (HTTPS) depending on certificate presence.
 
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
-    response::Redirect,
-    routing::{get, post},
+    response::{Html, Redirect},
+    routing::{get},
 };
 use rand::distr::{Alphanumeric, SampleString};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
@@ -14,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::Path as FilePath;
 use std::sync::Arc;
+
+// Include index.html at compile-time for a minimal frontend
+const INDEX: &str = include_str!("index.html");
 
 // Shared handle to the embedded database.
 type SharedDb = Arc<Database>;
@@ -110,7 +112,7 @@ async fn main() {
 
     // Build router with shared DB state.
     let app = Router::new()
-        .route("/", post(create_short_link))
+        .route("/", get(|| async { Html(INDEX) }).post(create_short_link))
         .route("/{alias}", get(redirect_link))
         .with_state(db.clone());
 
@@ -129,7 +131,7 @@ async fn main() {
     let https = tokio::spawn({
         async move {
             let cert = FilePath::new("domain.cert.pem");
-            let key  = FilePath::new("private.key.pem");
+            let key = FilePath::new("private.key.pem");
             if !cert.exists() || !key.exists() {
                 // Quietly skip HTTPS if certs missing
                 return;
@@ -151,4 +153,3 @@ async fn main() {
         https, http
     );
 }
-
