@@ -112,33 +112,43 @@ async fn main() {
     let app = Router::new()
         .route("/", post(create_short_link))
         .route("/{alias}", get(redirect_link))
-        .with_state(db);
+        .with_state(db.clone());
 
-    // Choose port: 443 if both cert files exist, otherwise 80.
-    let cert = FilePath::new("domain.cert.pem");
-    let key = FilePath::new("private.key.pem");
-    let addr = SocketAddr::from((
-        [0, 0, 0, 0],
-        if cert.exists() && key.exists() { 443 } else { 80 },
-    ));
+    // HTTP task via regular axum
+    let http = tokio::spawn({
+        let app = app.clone();
+        async move {
+            let addr = SocketAddr::from(([0, 0, 0, 0], 80));
+            println!("HTTP on {}", addr);
+            let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+            axum::serve(listener, app).await.unwrap();
+        }
+    });
 
-    println!(
-        "Listening on {} ({})",
-        addr,
-        if addr.port() == 443 { "HTTPS" } else { "HTTP" }
+    // HTTPS task via axum-server
+    let https = tokio::spawn({
+        async move {
+            let cert = FilePath::new("domain.cert.pem");
+            let key  = FilePath::new("private.key.pem");
+            if !cert.exists() || !key.exists() {
+                // Quietly skip HTTPS if certs missing
+                return;
+            }
+            let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
+                .await
+                .expect("TLS files");
+            let addr = SocketAddr::from(([0, 0, 0, 0], 443));
+            println!("HTTPS on {}", addr);
+            axum_server::bind_rustls(addr, rustls_config)
+                .serve(app.into_make_service())
+                .await
+                .unwrap();
+        }
+    });
+
+    let (_, _) = tokio::join!(
+        biased; // Prioritize polling the HTTPS server
+        https, http
     );
-
-    // Bind and serve: HTTPS via axum-server, HTTP via regular axum.
-    if addr.port() == 443 {
-        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
-            .await
-            .expect("Failed to load TLS files");
-        axum_server::bind_rustls(addr, rustls_config)
-            .serve(app.into_make_service())
-            .await
-            .unwrap();
-    } else {
-        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-        axum::serve(listener, app).await.unwrap();
-    }
 }
+
