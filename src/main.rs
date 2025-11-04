@@ -1,14 +1,15 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::Redirect,
     routing::{get, post},
-    Json, Router,
 };
 use rand::distr::{Alphanumeric, SampleString};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::path::Path as FilePath;
 use std::sync::Arc;
 
 type SharedDb = Arc<Database>;
@@ -70,7 +71,9 @@ async fn redirect_link(
     State(db): State<SharedDb>,
     Path(alias): Path<String>,
 ) -> Result<Redirect, StatusCode> {
-    let read_txn = db.begin_read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let read_txn = db
+        .begin_read()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let table = read_txn
         .open_table(TABLE)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -98,8 +101,36 @@ async fn main() {
         .route("/{alias}", get(redirect_link))
         .with_state(db);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 80));
-    println!("Listening on {}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    // Decide HTTP vs HTTPS based on certificate files
+    let cert = FilePath::new("domain.cert.pem");
+    let key = FilePath::new("private.key.pem");
+
+    let addr = SocketAddr::from((
+        [0, 0, 0, 0],
+        if cert.exists() && key.exists() {
+            443
+        } else {
+            80
+        },
+    ));
+
+    println!(
+        "Listening on {} ({})",
+        addr,
+        if addr.port() == 443 { "HTTPS" } else { "HTTP" }
+    );
+
+    if addr.port() == 443 {
+        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
+            .await
+            .expect("Failed to load TLS files");
+        axum_server::bind_rustls(addr, rustls_config)
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+    } else {
+        // bind only for HTTP
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+        axum::serve(listener, app).await.unwrap();
+    }
 }
