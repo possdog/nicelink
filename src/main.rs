@@ -1,3 +1,6 @@
+// Minimal link-shortener in Rust: Axum + redb.
+// Listens on 80 (HTTP) or 443 (HTTPS) depending on certificate presence.
+
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -12,21 +15,27 @@ use std::net::SocketAddr;
 use std::path::Path as FilePath;
 use std::sync::Arc;
 
+// Shared handle to the embedded database.
 type SharedDb = Arc<Database>;
 
+// Single table: key = short alias, value = original URL.
 const TABLE: TableDefinition<&str, &str> = TableDefinition::new("urls");
 
+// Expected query parameters for creating a short link.
 #[derive(Deserialize)]
 struct CreateShortLink {
     url: String,
     alias: Option<String>,
 }
 
+// Response returned when a short link is created.
 #[derive(Serialize)]
 struct ShortLinkResponse {
     short_link: String,
 }
 
+// POST / handler: create short link.
+// Returns 201 on success, 400 for bad requests, 500 for server errors.
 async fn create_short_link(
     State(db): State<SharedDb>,
     Query(params): Query<CreateShortLink>,
@@ -67,6 +76,8 @@ async fn create_short_link(
     }))
 }
 
+// GET /{alias} handler: redirect to original URL.
+// Returns 302 on success, 404 if alias not found, 500 on server errors.
 async fn redirect_link(
     State(db): State<SharedDb>,
     Path(alias): Path<String>,
@@ -89,6 +100,7 @@ async fn redirect_link(
 
 #[tokio::main]
 async fn main() {
+    // Open (or create) the on-disk database.
     let db = Arc::new(Database::create("link_shortener.redb").unwrap());
     {
         let write_txn = db.begin_write().unwrap();
@@ -96,22 +108,18 @@ async fn main() {
         write_txn.commit().unwrap();
     }
 
+    // Build router with shared DB state.
     let app = Router::new()
         .route("/", post(create_short_link))
         .route("/{alias}", get(redirect_link))
         .with_state(db);
 
-    // Decide HTTP vs HTTPS based on certificate files
+    // Choose port: 443 if both cert files exist, otherwise 80.
     let cert = FilePath::new("domain.cert.pem");
     let key = FilePath::new("private.key.pem");
-
     let addr = SocketAddr::from((
         [0, 0, 0, 0],
-        if cert.exists() && key.exists() {
-            443
-        } else {
-            80
-        },
+        if cert.exists() && key.exists() { 443 } else { 80 },
     ));
 
     println!(
@@ -120,6 +128,7 @@ async fn main() {
         if addr.port() == 443 { "HTTPS" } else { "HTTP" }
     );
 
+    // Bind and serve: HTTPS via axum-server, HTTP via regular axum.
     if addr.port() == 443 {
         let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
             .await
@@ -129,7 +138,6 @@ async fn main() {
             .await
             .unwrap();
     } else {
-        // bind only for HTTP
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         axum::serve(listener, app).await.unwrap();
     }
