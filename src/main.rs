@@ -1,18 +1,25 @@
 // Minimal link-shortener in Rust: Axum + redb.
 
+use std::{
+    net::SocketAddr,
+    path::Path as FilePath,
+    sync::{Arc, LazyLock},
+};
+
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, Redirect},
-    routing::{get},
+    routing::get,
 };
 use rand::distr::{Alphanumeric, SampleString};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
-use std::path::Path as FilePath;
-use std::sync::Arc;
+
+static ALIAS_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\w{5,20}$").unwrap());
+static URL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https?://...").unwrap());
 
 // Include index.html at compile-time for a minimal frontend
 const INDEX: &str = include_str!("index.html");
@@ -42,19 +49,44 @@ async fn create_short_link(
     State(db): State<SharedDb>,
     Query(params): Query<CreateShortLink>,
 ) -> Result<Json<ShortLinkResponse>, (StatusCode, String)> {
-    if params.url.is_empty() {
+    // Do the user a favor and trim whitespace, just in case
+    let url = params.url.trim().to_string();
+
+    // Disallow empty target URLs (obviously)
+    if url.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "Missing 'url' parameter".into()));
     }
 
+    // Disallow target URLs that aren't "normal"
+    if !URL_REGEX.is_match(&url) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid URL format. Must be a valid http or https URL".into(),
+        ));
+    }
+
     let alias = if let Some(a) = params.alias {
+        // Do the user a favor and trim whitespace, just in case
+        let a = a.trim().to_string();
+
+        // Disallow empty aliases (obviously)
         if a.is_empty() {
             return Err((StatusCode::BAD_REQUEST, "Alias cannot be empty".into()));
+        }
+
+        // Disallow excessively short or long aliases, as well as unusual characters
+        if !ALIAS_REGEX.is_match(&a) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Invalid alias format. Must be 5-20 alphanumeric characters or underscores".into(),
+            ));
         }
         a
     } else {
         Alphanumeric.sample_string(&mut rand::rng(), 5)
     };
 
+    // Database time
     let write_txn = db
         .begin_write()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -66,7 +98,7 @@ async fn create_short_link(
             return Err((StatusCode::BAD_REQUEST, "Alias already exists".into()));
         }
         table
-            .insert(alias.as_str(), params.url.as_str())
+            .insert(alias.as_str(), url.as_str())
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
     write_txn
@@ -102,7 +134,7 @@ async fn redirect_link(
 
 #[tokio::main]
 async fn main() {
-    // Open (or create) the on-disk database.
+    // Open the database, or create one if it doesn't already exist
     let db = Arc::new(Database::create("link_shortener.redb").unwrap());
     {
         let write_txn = db.begin_write().unwrap();
