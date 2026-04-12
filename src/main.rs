@@ -18,8 +18,10 @@ use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-static ALIAS_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\w{5,20}$").unwrap());
-static URL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https?://...").unwrap());
+static ALIAS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_]{5,20}$").unwrap());
+static URL_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^https?://[\x21-\x7E]+$").unwrap());
 
 // Include index.html at compile-time for a minimal frontend
 const INDEX: &str = include_str!("index.html");
@@ -86,24 +88,61 @@ async fn create_short_link(
         Alphanumeric.sample_string(&mut rand::rng(), 5)
     };
 
+    let alias_clone = alias.clone();
+    let url_clone = url.clone();
+
     // Database time
-    let write_txn = db
-        .begin_write()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    {
-        let mut table = write_txn
-            .open_table(TABLE)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        if table.get(alias.as_str()).unwrap().is_some() {
-            return Err((StatusCode::BAD_REQUEST, "Alias already exists".into()));
+    let db_result = tokio::task::spawn_blocking(move || {
+        let write_txn = db.begin_write().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error".into(),
+            )
+        })?;
+        {
+            let mut table = write_txn.open_table(TABLE).map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal Server Error".into(),
+                )
+            })?;
+            if table
+                .get(alias_clone.as_str())
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal Server Error".into(),
+                    )
+                })?
+                .is_some()
+            {
+                return Err((StatusCode::BAD_REQUEST, "Alias already exists".into()));
+            }
+            table
+                .insert(alias_clone.as_str(), url_clone.as_str())
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal Server Error".into(),
+                    )
+                })?;
         }
-        table
-            .insert(alias.as_str(), url.as_str())
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
-    write_txn
-        .commit()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        write_txn.commit().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error".into(),
+            )
+        })
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error".into(),
+        )
+    })?;
+
+    db_result?;
 
     Ok(Json(ShortLinkResponse {
         short_link: format!("/{}", alias),
@@ -116,18 +155,23 @@ async fn redirect_link(
     State(db): State<SharedDb>,
     Path(alias): Path<String>,
 ) -> Result<Redirect, StatusCode> {
-    let read_txn = db
-        .begin_read()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let table = read_txn
-        .open_table(TABLE)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let url = table
-        .get(alias.as_str())
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?
-        .value()
-        .to_string();
+    let url = tokio::task::spawn_blocking(move || {
+        let read_txn = db
+            .begin_read()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let table = read_txn
+            .open_table(TABLE)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let url = table
+            .get(alias.as_str())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?
+            .value()
+            .to_string();
+        Ok::<String, StatusCode>(url)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     Ok(Redirect::permanent(&url))
 }
@@ -180,8 +224,5 @@ async fn main() {
         }
     });
 
-    let (_, _) = tokio::join!(
-        biased; // Prioritize polling the HTTPS server
-        https, http
-    );
+    tokio::try_join!(https, http).expect("A server task panicked");
 }

@@ -1,5 +1,5 @@
-# User-specific ST files
-*.sublime-workspace
+# Sublime Text
+*.sublime-*
 
 # Database file
 *.redb

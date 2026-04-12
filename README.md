@@ -1,5 +1,7 @@
 # tllc
 
+> 🤖 This project was made by an LLM with a human in the loop.
+
 A little baby link shortener. Zero trackers.
 
 ## Usage
