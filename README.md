@@ -1,6 +1,6 @@
 # tllc
 
-> 🤖 This project was made by an LLM with a human in the loop.
+> 🤖 This code was written by a human-led AI agent.
 
 A little baby link shortener. Zero trackers.
 
