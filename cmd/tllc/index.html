@@ -5,36 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>t.l.lc — link shortener</title>
     <style>
-      body {
-        font-family: sans-serif;
-      }
+      *{font-family:sans-serif;font-size:large;color:#100f0f}body{background-color:#fffcf0}input{background-color:#e6e4d9;border:2px solid #dad8ce;border-radius:4px}input::placeholder{color:#6f6e69}input:focus{outline:2px solid #205ea6}button{background-color:#205ea6;border:0;padding:.2rem .5rem .2rem .5rem;border-radius:4px;color:#fffcf0}button:hover{cursor:pointer;background-color:#4385be}#letter-t:hover::after{content:"iny"}#letter-l:hover::after{content:"ink"}div{margin-bottom:.5rem}@media (prefers-color-scheme:dark){*{color:#cecdc3}body{background-color:#100f0f}input{background-color:#282726;border:2px solid #343331}input::placeholder{color:#575653}input:focus{outline:2px solid #4385be}button{background-color:#4385be;padding:.2rem .5rem .2rem .5rem;color:#100f0f}button:hover{background-color:#205ea6}}
     </style>
   </head>
   <body>
-    t(iny).l(ink).lc — zero-tracking link shortener
-
-    <br>
+    <div>
+      <span id="letter-t">t</span>.<span id="letter-l">l</span>.lc —
+      zero-tracking link shortener
+    </div>
 
     <!-- Target URL (required) -->
-    <input
-      id="url"
-      type="url"
-      placeholder="target url"
-      required
-    >
-
-    <br>
+    <div>
+      <input
+        id="url"
+        type="url"
+        placeholder="target url"
+        required
+      >
+    </div>
 
     <!-- Custom alias (optional) -->
-    <input
-      id="alias"
-      type="text"
-      placeholder="custom link (optional)"
-    >
+    <div>
+      <input
+        id="alias"
+        type="text"
+        placeholder="custom link (optional)"
+      >
+    </div>
 
-    <br>
-
-    <button onclick="shorten()">submit</button>
+    <div>
+      <button onclick="shorten()">submit</button>
+    </div>
 
     <!-- Result display -->
     <div id="result" onclick="copyResult(this)"></div>
