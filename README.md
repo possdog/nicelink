@@ -1,6 +1,6 @@
 # tllc
 
-> 🤖 This code was written by a human-led AI agent.
+> This code was written by a human-led AI agent.
 
 A little baby link shortener. Zero trackers.
 
@@ -11,14 +11,9 @@ curl -X POST 'https://t.l.lc/?url=https://example.com/'
 ```
 
 ## Building
-This was made on MacOS for deployment on a Debian server. To that end:
-```
-# 1. Add the 64-bit Debian target
-rustup target add x86_64-unknown-linux-gnu
+```bash
+go build -o tllc ./cmd/tllc
 
-# 2. Install a Linux-aware linker (Homebrew)
-brew install SergioBenitez/osxct/x86_64-unknown-linux-gnu
-
-# 3. Execute the provided build script (build-linux.sh)
-./build-linux.sh
+# Cross-compile
+GOOS=linux GOARCH=amd64 go build -o tllc ./cmd/tllc
 ```

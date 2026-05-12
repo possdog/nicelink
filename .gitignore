@@ -1,11 +1,8 @@
-# Sublime Text
-*.sublime-*
+# Database files
+*.bolt
 
-# Database file
-*.redb
-
-# Added by cargo
-/target
+# Go build output
+/tllc
 
 # Prevent accidental SSL/TLS leaks
 *.pem
