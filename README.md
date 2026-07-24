@@ -1,6 +1,6 @@
 # tllc
 
-> This code was written by a human-led AI agent.
+> 🤖 This code was written by a human-led AI agent.
 
 A little baby link shortener. Zero trackers.
 
