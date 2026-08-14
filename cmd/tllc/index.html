@@ -129,18 +129,12 @@
       const params = new URLSearchParams({ url });
       if (alias) params.append("alias", alias);
 
-      const res = await fetch(
-        `/?${params}
-    `,
-        { method: "POST" },
-      );
+      const res = await fetch(`/?${params}`, { method: "POST" });
       const data = await res.json().catch(() => null);
       const out = document.getElementById("result");
 
       if (res.ok && data?.short_link) {
-        out.textContent = `${location.origin}
-        ${data.short_link}
-      `;
+        out.textContent = `${location.origin}${data.short_link}`;
       } else {
         out.textContent = "Error: " +
           (data?.detail || res.statusText);
