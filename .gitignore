@@ -1,6 +1,9 @@
 # Database files
 *.bolt
 
+# Server encryption secret
+secret.key
+
 # Go build output
 /tllc
 
