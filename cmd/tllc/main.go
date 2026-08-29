@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -26,6 +27,10 @@ import (
 )
 
 func main() {
+	// Parse command-line flags.
+	port := flag.String("port", ":80", "HTTP port to listen on")
+	flag.Parse()
+
 	// Ensure the bbolt bucket exists before we start serving.
 	db, err := bolt.Open(dbName, 0600, nil)
 	if err != nil {
@@ -69,7 +74,7 @@ func main() {
 	defer cancel()
 
 	httpServer := &http.Server{
-		Addr:    ":80",
+		Addr:    *port,
 		Handler: handler,
 	}
 

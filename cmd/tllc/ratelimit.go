@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"golang.org/x/time/rate"
@@ -54,6 +55,17 @@ func (rl *rateLimiter) allow(ip string) bool {
 	return rl.limiterFor(ip).Allow()
 }
 
+// isTrustedProxy reports whether the given host is a trusted reverse proxy.
+// Currently only localhost (127.0.0.1 and ::1) is trusted.
+func isTrustedProxy(host string) bool {
+	return host == "127.0.0.1" || host == "::1"
+}
+
+// validIP reports whether the given string is a valid IP address.
+func validIP(ip string) bool {
+	return net.ParseIP(ip) != nil
+}
+
 // middleware wraps an http.Handler with per-IP rate limiting.  Clients that
 // exceed their allowance receive 429 Too Many Requests.
 func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
@@ -70,25 +82,45 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP extracts the caller's IP from r.RemoteAddr.
+// clientIP extracts the caller's IP from the request.
 //
-// The server is designed to be exposed directly to the internet without a
-// reverse proxy.  In that topology r.RemoteAddr is the kernel-supplied TCP
-// source IP, which the client cannot spoof without breaking the TCP handshake.
+// When the server is directly exposed to the internet (no reverse proxy),
+// r.RemoteAddr is the kernel-supplied TCP source IP and is used directly.
 //
-// X-Forwarded-For and X-Real-IP headers are intentionally NOT trusted: because
-// there is no proxy in front to overwrite them, any client could set these
-// headers to arbitrary values and obtain a fresh rate-limit bucket on each
-// request, making the limiter trivially bypassable.
-//
-// If reverse-proxy support is added in the future, re-introduce parsing of
-// X-Forwarded-For / X-Real-IP here — but only after verifying that the proxy
-// is configured to strip or overwrite client-supplied values, or by gating
-// on a trusted-proxy IP list checked against r.RemoteAddr.
+// When running behind a trusted reverse proxy (e.g., Caddy on localhost),
+// r.RemoteAddr will be the proxy's IP. In this case, we trust the
+// X-Forwarded-For and X-Real-IP headers set by the proxy to obtain the real
+// client IP. Only localhost (127.0.0.1 and ::1) is considered a trusted proxy
+// to prevent header-spoofing attacks from untrusted sources.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		// RemoteAddr has no port; fall back to the raw value.
+		host = r.RemoteAddr
 	}
+
+	// If the direct connection is from a trusted proxy, try forwarded headers.
+	if isTrustedProxy(host) {
+		// Try X-Forwarded-For first (may contain a comma-separated list).
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			// Leftmost entry is the original client IP.
+			parts := strings.Split(xff, ",")
+			ip := strings.TrimSpace(parts[0])
+			if validIP(ip) {
+				return ip
+			}
+		}
+		// Fall back to X-Real-IP.
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			ip := strings.TrimSpace(xri)
+			if validIP(ip) {
+				return ip
+			}
+		}
+		// Neither header provided a valid IP; fall back to the proxy's IP.
+		return host
+	}
+
+	// Direct connection or untrusted proxy: use RemoteAddr's host.
 	return host
 }
