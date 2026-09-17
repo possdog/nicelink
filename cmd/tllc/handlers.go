@@ -69,7 +69,9 @@ func (a *app) handleCreate(w http.ResponseWriter, r *http.Request) {
 	keyHash := hashAlias(alias)
 	encrypted, err := encryptURL(a.secret, alias, url)
 	if err != nil {
-		log.Printf("ERROR: encrypt failed for alias %q: %v", alias, err)
+		// Log the hash, not the alias — the alias is the secret that must
+		// never be persisted, and a log file is persistence.
+		log.Printf("ERROR: encrypt failed for key %x: %v", keyHash, err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Detail: "Internal Server Error"})
 		return
 	}
@@ -91,7 +93,7 @@ func (a *app) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		log.Printf("ERROR: db insert failed for alias %q: %v", alias, err)
+		log.Printf("ERROR: db insert failed for key %x: %v", keyHash, err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Detail: "Internal Server Error"})
 		return
 	}
@@ -131,14 +133,14 @@ func (a *app) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		log.Printf("ERROR: db lookup failed for alias %q: %v", alias, err)
+		log.Printf("ERROR: db lookup failed for key %x: %v", keyHash, err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Detail: "Internal Server Error"})
 		return
 	}
 
 	url, err := decryptURL(a.secret, alias, encrypted)
 	if err != nil {
-		log.Printf("ERROR: decrypt failed for alias %q: %v", alias, err)
+		log.Printf("ERROR: decrypt failed for key %x: %v", keyHash, err)
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Detail: "Internal Server Error"})
 		return
 	}

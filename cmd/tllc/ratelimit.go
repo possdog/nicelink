@@ -72,7 +72,10 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
 		if !rl.allow(ip) {
-			log.Printf("WARN: rate limit exceeded for %s — %s %s", ip, r.Method, r.URL.Path)
+			// Deliberately do not log the client IP or request path —
+			// doing so would create an (IP, alias) access log, defeating
+			// the privacy model that never persists the alias.
+			log.Printf("WARN: rate limit exceeded")
 			writeJSON(w, http.StatusTooManyRequests, errorResponse{
 				Detail: "Rate limit exceeded. Please slow down.",
 			})
