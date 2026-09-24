@@ -1,4 +1,4 @@
-module tllc
+module nicelink
 
 go 1.26.3
 

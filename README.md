@@ -1,4 +1,4 @@
-# tllc
+# nicelink
 
 > 🤖 This code was written by a human-led AI agent.
 
@@ -18,8 +18,8 @@ curl -X POST 'https://t.l.lc/?url=https://example.com/&alias=example'
 
 ## Building
 ```bash
-go build -o tllc ./cmd/tllc
+go build -o nicelink ./cmd/nicelink
 
 # Cross-compile
-GOOS=linux GOARCH=amd64 go build -o tllc ./cmd/tllc
+GOOS=linux GOARCH=amd64 go build -o nicelink ./cmd/nicelink
 ```

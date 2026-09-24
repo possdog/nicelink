@@ -1,20 +1,20 @@
-# AGENTS.md — tllc
+# AGENTS.md — nicelink
 
 ## Build & run
 
 ```bash
-go build -o tllc ./cmd/tllc
-./tllc   # listens :80, optionally :443 if TLS certs present
+go build -o nicelink ./cmd/nicelink
+./nicelink   # listens :80, optionally :443 if TLS certs present
 ```
 
 Requires **Go 1.22+** (uses enhanced mux patterns: `"GET /"`, `r.PathValue("alias")`).
 
 ## Architecture
 
-Single binary, one package at `cmd/tllc/`, split across focused source files:
+Single binary, one package at `cmd/nicelink/`, split across focused source files:
 
 ```
-cmd/tllc/
+cmd/nicelink/
 ├── main.go      — entry point: db init, secret loading, migration, HTTP server, graceful shutdown
 ├── app.go       — shared types/constants (app struct, validation regexes, JSON response types, sentinel errors)
 ├── crypto.go    — encryption helpers: secret management, alias hashing, key derivation, AES-256-GCM encrypt/decrypt
@@ -64,12 +64,12 @@ Graceful shutdown on SIGINT/SIGTERM (5s drain).
 ## Testing / linting
 
 ```bash
-go test -v -count=1 ./cmd/tllc/
-go vet ./cmd/tllc/
-go fmt ./cmd/tllc/
+go test -v -count=1 ./cmd/nicelink/
+go vet ./cmd/nicelink/
+go fmt ./cmd/nicelink/
 ```
 
-Tests live alongside the source in `cmd/tllc/*_test.go`:
+Tests live alongside the source in `cmd/nicelink/*_test.go`:
 
 - `helpers_test.go` — shared test infrastructure (temp bbolt DB, request helpers)
 - `crypto_test.go` — hash/deriveKey/encrypt/decrypt, secret management, randomAlias
@@ -77,4 +77,4 @@ Tests live alongside the source in `cmd/tllc/*_test.go`:
 - `ratelimit_test.go` — clientIP extraction, rate limiting, middleware
 - `migrate_test.go` — legacy migration, idempotency, mixed entries, plaintext removal
 
-No linter or CI. The `.gitignore` excludes `*.bolt`, `*.pem`, `secret.key`, and the `/tllc` binary.
+No linter or CI. The `.gitignore` excludes `*.bolt`, `*.pem`, `secret.key`, and the `/nicelink` binary.
