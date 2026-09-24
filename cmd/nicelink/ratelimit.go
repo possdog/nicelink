@@ -91,10 +91,15 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 // r.RemoteAddr is the kernel-supplied TCP source IP and is used directly.
 //
 // When running behind a trusted reverse proxy (e.g., Caddy on localhost),
-// r.RemoteAddr will be the proxy's IP. In this case, we trust the
-// X-Forwarded-For and X-Real-IP headers set by the proxy to obtain the real
-// client IP. Only localhost (127.0.0.1 and ::1) is considered a trusted proxy
-// to prevent header-spoofing attacks from untrusted sources.
+// r.RemoteAddr will be the proxy's IP. Proxies append the address of their
+// immediate peer to the X-Forwarded-For chain, so with a single trusted hop
+// the rightmost entry is the one the trusted proxy appended and everything to
+// its left may be client-supplied and spoofable. We therefore use the rightmost
+// entry; taking the leftmost would let a client rotate fake IPs and get a
+// fresh rate-limit bucket per request. X-Real-IP is never trusted because
+// proxies do not strip a client-supplied X-Real-IP, so honoring it would
+// reintroduce the same spoof. Only localhost (127.0.0.1 and ::1) is considered
+// a trusted proxy.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -104,23 +109,16 @@ func clientIP(r *http.Request) string {
 
 	// If the direct connection is from a trusted proxy, try forwarded headers.
 	if isTrustedProxy(host) {
-		// Try X-Forwarded-For first (may contain a comma-separated list).
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// Leftmost entry is the original client IP.
-			parts := strings.Split(xff, ",")
-			ip := strings.TrimSpace(parts[0])
-			if validIP(ip) {
-				return ip
-			}
+		// Use the rightmost X-Forwarded-For entry: the trusted proxy
+		// appends the real client IP at the end of the chain, so anything
+		// to its left is attacker-controlled. If the rightmost entry is
+		// not a valid IP, the proxy did not append one and the whole
+		// chain is untrustworthy — fall back to the proxy's own IP.
+		parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+		ip := strings.TrimSpace(parts[len(parts)-1])
+		if validIP(ip) {
+			return ip
 		}
-		// Fall back to X-Real-IP.
-		if xri := r.Header.Get("X-Real-IP"); xri != "" {
-			ip := strings.TrimSpace(xri)
-			if validIP(ip) {
-				return ip
-			}
-		}
-		// Neither header provided a valid IP; fall back to the proxy's IP.
 		return host
 	}
 

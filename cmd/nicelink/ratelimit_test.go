@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
@@ -84,13 +85,16 @@ func TestClientIP_Localhost_UsesXForwardedFor(t *testing.T) {
 	}
 }
 
-func TestClientIP_Localhost_UsesXRealIP(t *testing.T) {
+func TestClientIP_Localhost_IgnoresXRealIP(t *testing.T) {
+	// X-Real-IP is never trusted, even behind a trusted proxy: proxies do
+	// not strip a client-supplied X-Real-IP, so honoring it would let a
+	// client rotate fake IPs and bypass rate limiting.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("X-Real-IP", "203.0.113.5")
 	ip := clientIP(req)
-	if ip != "203.0.113.5" {
-		t.Fatalf("expected 203.0.113.5 from X-Real-IP, got %q", ip)
+	if ip != "127.0.0.1" {
+		t.Fatalf("expected 127.0.0.1 (X-Real-IP should be ignored), got %q", ip)
 	}
 }
 
@@ -105,14 +109,28 @@ func TestClientIP_Localhost_FallsBackToRemoteAddr(t *testing.T) {
 }
 
 func TestClientIP_Localhost_XForwardedForInvalidIP(t *testing.T) {
-	// Invalid IP in X-Forwarded-For should fall back to X-Real-IP or RemoteAddr.
+	// An invalid rightmost X-Forwarded-For entry means the trusted proxy
+	// did not append a client IP, so the whole chain is untrustworthy and
+	// we fall back to the proxy's own IP. A client-supplied X-Real-IP
+	// must not be used as a fallback.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("X-Forwarded-For", "not-an-ip")
 	req.Header.Set("X-Real-IP", "203.0.113.5")
 	ip := clientIP(req)
-	if ip != "203.0.113.5" {
-		t.Fatalf("expected 203.0.113.5 from X-Real-IP (XFF invalid), got %q", ip)
+	if ip != "127.0.0.1" {
+		t.Fatalf("expected 127.0.0.1 (invalid XFF falls back to RemoteAddr), got %q", ip)
+	}
+}
+
+func TestClientIP_Localhost_XForwardedForEmptyInvalid(t *testing.T) {
+	// Empty or absent X-Forwarded-For: fall back to RemoteAddr.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "")
+	ip := clientIP(req)
+	if ip != "127.0.0.1" {
+		t.Fatalf("expected 127.0.0.1 (empty XFF fallback), got %q", ip)
 	}
 }
 
@@ -150,24 +168,40 @@ func TestClientIP_NonLocalhost_IgnoresHeaders(t *testing.T) {
 }
 
 func TestClientIP_XForwardedFor_MultipleIPs(t *testing.T) {
-	// X-Forwarded-For may contain a chain; leftmost is the client.
+	// X-Forwarded-For may contain a chain. The rightmost entry is the one
+	// the trusted proxy appended (the real client); everything to its left
+	// may be spoofed by the client, so it must not be used.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("X-Forwarded-For", "203.0.113.5, 198.51.100.1, 192.0.2.1")
 	ip := clientIP(req)
-	if ip != "203.0.113.5" {
-		t.Fatalf("expected 203.0.113.5 (first IP), got %q", ip)
+	if ip != "192.0.2.1" {
+		t.Fatalf("expected 192.0.2.1 (rightmost IP, proxy-appended), got %q", ip)
 	}
 }
 
 func TestClientIP_XForwardedFor_MultipleIPsWithSpaces(t *testing.T) {
-	// X-Forwarded-For may have spaces around commas.
+	// X-Forwarded-For may have spaces around commas; the rightmost entry
+	// is still the proxy-appended client IP.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("X-Forwarded-For", "203.0.113.5, 198.51.100.1")
 	ip := clientIP(req)
-	if ip != "203.0.113.5" {
-		t.Fatalf("expected 203.0.113.5 (first IP with spaces), got %q", ip)
+	if ip != "198.51.100.1" {
+		t.Fatalf("expected 198.51.100.1 (rightmost IP with spaces), got %q", ip)
+	}
+}
+
+func TestClientIP_Localhost_SpoofedLeftmostIgnored(t *testing.T) {
+	// A client sending its own X-Forwarded-For value cannot impersonate a
+	// different client: the trusted proxy appends the client's real IP at
+	// the end, and that appended entry is what we use.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.5, 198.51.100.7")
+	ip := clientIP(req)
+	if ip != "198.51.100.7" {
+		t.Fatalf("expected 198.51.100.7 (proxy-appended IP), got %q", ip)
 	}
 }
 
@@ -347,5 +381,42 @@ func TestRateLimiter_Middleware_XForwardedForDoesNotBypass(t *testing.T) {
 	handler.ServeHTTP(w, req2)
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 (XFF spoofing should not bypass rate limit), got %d", w.Code)
+	}
+}
+
+func TestRateLimiter_Middleware_TrustedProxy_XFFSpoofingDoesNotBypass(t *testing.T) {
+	// Behind a trusted proxy (RemoteAddr is localhost), a client cannot
+	// bypass rate limiting by rotating the leftmost X-Forwarded-For entry:
+	// the proxy appends the client's real IP at the end, and that
+	// rightmost entry is what the limiter keys on.
+	rl := newRateLimiter()
+	handler := rl.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Exhaust the burst with requests that each spoof a different
+	// leftmost XFF entry, as Caddy would forward them:
+	// "<spoofed>, <real client IP>".
+	for i := range defaultBurst {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "127.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "203.0.113."+strconv.Itoa(5+i)+", 192.0.2.44")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d within burst returned %d", i+1, w.Code)
+		}
+	}
+
+	// A further request with yet another spoofed leftmost entry must be
+	// rate-limited: the constant proxy-appended entry keeps it in the
+	// same bucket as the requests above.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "198.51.100.99, 192.0.2.44")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 (rotating leftmost XFF should not bypass rate limit), got %d", w.Code)
 	}
 }

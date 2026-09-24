@@ -55,7 +55,14 @@ Auto-enabled when `domain.cert.pem` and `private.key.pem` exist in the working d
 
 ### Rate limiting
 
-All HTTP endpoints are wrapped in per-client-IP rate limiting (`ratelimit.go`) using `golang.org/x/time/rate`. Each IP gets a token-bucket limiter (5 req/s sustained, burst of 10). Requests beyond the allowance receive `429 Too Many Requests`. Client IP is extracted from `r.RemoteAddr` only. `X-Forwarded-For` and `X-Real-IP` headers are intentionally not trusted because the server is exposed directly to the internet without a reverse proxy; honoring them would allow any client to bypass rate limiting by sending a different header value on each request. If reverse-proxy support is added in the future, re-introduce forwarded-header parsing in `clientIP` — but only behind a trusted-proxy check.
+All HTTP endpoints are wrapped in per-client-IP rate limiting (`ratelimit.go`) using `golang.org/x/time/rate`. Each IP gets a token-bucket limiter (5 req/s sustained, burst of 10). Requests beyond the allowance receive `429 Too Many Requests`.
+
+Client IP extraction (`clientIP`) depends on the peer:
+
+- **Direct exposure** (no reverse proxy): `r.RemoteAddr` is the kernel-supplied TCP source IP and is used directly; `X-Forwarded-For` and `X-Real-IP` are ignored — honoring them would allow any client to bypass rate limiting by sending a different header value on each request.
+- **Behind a trusted proxy** (peer is `127.0.0.1` or `::1`, e.g. Caddy on localhost): the **rightmost** `X-Forwarded-For` entry is used. Proxies append the address of their immediate peer to the chain, so with a single trusted hop the rightmost entry is the one the trusted proxy appended; everything to its left may be client-supplied and spoofable. Taking the leftmost entry would let a client rotate fake IPs and get a fresh rate-limit bucket per request. If the rightmost entry is not a valid IP, the proxy did not append one and the whole chain is untrustworthy — the limiter falls back to the proxy's own IP (one shared bucket). `X-Real-IP` is never trusted, even behind a trusted proxy, because proxies do not strip a client-supplied `X-Real-IP`.
+
+Note for future deployments: the rightmost-entry rule is correct for exactly one trusted proxy hop. If a second proxy layer is ever added in front of the app, revisit `clientIP` (the rightmost entry would then be the middle proxy, not the client).
 
 ### Shutdown
 
