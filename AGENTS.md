@@ -104,21 +104,13 @@ Day-to-day:
 fly deploy --remote-only        # build + deploy from fly.toml
 fly status -a possdog-nicelink          # machine state + health checks
 fly logs -a possdog-nicelink            # app logs (rate-limit 429s appear as "WARN: rate limit exceeded")
-fly ssh sftp put <file> /data/<file>.incoming -a possdog-nicelink   # stage an import (see below)
+./clone_database.sh            # import an existing link_shortener.bolt + secret.key into /data (see below)
 fly certs add t.l.lc            # custom domain, after DNS A/AAAA records point at Fly
 ```
 
-**Migrating existing data** (e.g. from a previous VPS): `fly ssh sftp put` takes one file at a time (`put <local> <remote>`) and refuses to overwrite existing remote files, so upload each file to a fresh `.incoming` name, swap it into place with `mv` over SSH, then restart the machine so the app re-opens the swapped files (bbolt keeps the old file open and locked until restart; `mv` renames the directory entry, which is safe):
+**Migrating existing data** (e.g. from a previous VPS): run `./clone_database.sh` from the directory holding the old `link_shortener.bolt` and `secret.key`. The script resolves the running machine's ID dynamically (`fly status --json` + `jq`), then stages each file under a fresh `.incoming` name and swaps it in with `mv` over SSH, and restarts the machine last. This dance exists because `fly ssh sftp put` takes one file at a time (`put <local> <remote>`) and refuses to overwrite existing remote files, while `fly ssh console -C` does not run a shell (one command per call, no `&&`). The restart is required because bbolt keeps the old file open and locked until then; `mv` only renames the directory entry, which is safe.
 
-```bash
-fly ssh sftp put link_shortener.bolt /data/link_shortener.bolt.incoming -a possdog-nicelink
-fly ssh sftp put secret.key /data/secret.key.incoming -a possdog-nicelink
-fly ssh console -C "mv /data/link_shortener.bolt.incoming /data/link_shortener.bolt" -a possdog-nicelink
-fly ssh console -C "mv /data/secret.key.incoming /data/secret.key" -a possdog-nicelink
-fly machine restart <machine-id> -a possdog-nicelink
-```
-
-Note: `fly ssh console -C` does not run a shell, so issue one command per call (no `&&`). Do the swap while no link-creation traffic is in flight (e.g. right after a deploy). The legacy plaintext migration runs automatically on next boot if the DB is in the old format. `secret.key` must travel with the DB or no link can be decrypted.
+Do the swap while no link-creation traffic is in flight (e.g. right after a deploy). The legacy plaintext migration runs automatically on next boot if the DB is in the old format. `secret.key` must travel with the DB or no link can be decrypted.
 
 Volumes are pinned to one region and one physical host; scheduled snapshots are enabled by default (`fly volumes snapshots list`). Losing the volume or `secret.key` loses every link permanently.
 
