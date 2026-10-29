@@ -27,14 +27,28 @@ import (
 )
 
 func main() {
-	// Parse command-line flags.
-	port := flag.String("port", ":80", "HTTP port to listen on")
+	// Parse command-line flags. The default listen address comes from the
+	// PORT environment variable when set (Fly.io injects PORT=8080 and routes
+	// edge traffic there); locally it falls back to :80.
+	defaultAddr := ":80"
+	if p := os.Getenv("PORT"); p != "" {
+		defaultAddr = ":" + p
+	}
+	port := flag.String("port", defaultAddr, "address to listen on (e.g. :8080)")
 	flag.Parse()
 
-	// Ensure the bbolt bucket exists before we start serving.
-	db, err := bolt.Open(dbName, 0600, nil)
+	// The data directory (working directory by default, or DATA_DIR) must
+	// exist before bbolt can create/open the database file in it.
+	if err := os.MkdirAll(dataDir(), 0700); err != nil {
+		log.Fatalf("failed to create data directory %q: %v", dataDir(), err)
+	}
+
+	// Ensure the bbolt bucket exists before we start serving. The open
+	// timeout makes a stale file lock (e.g. another process still holding
+	// the DB) fail fast instead of blocking startup forever.
+	db, err := bolt.Open(dbPath(), 0600, &bolt.Options{Timeout: 10 * time.Second})
 	if err != nil {
-		log.Fatalf("failed to open database %q: %v", dbName, err)
+		log.Fatalf("failed to open database %q: %v", dbPath(), err)
 	}
 	defer db.Close()
 

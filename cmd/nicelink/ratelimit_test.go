@@ -205,6 +205,78 @@ func TestClientIP_Localhost_SpoofedLeftmostIgnored(t *testing.T) {
 	}
 }
 
+// --- TRUST_PROXY env opt-in (e.g. Fly.io edge proxy) ---
+
+func TestClientIP_TrustProxyEnv_NonLocalhostUsesRightmostXFF(t *testing.T) {
+	// With TRUST_PROXY=true, a non-loopback peer (the platform edge proxy on
+	// Fly.io) is trusted: the rightmost X-Forwarded-For entry is used.
+	t.Setenv("TRUST_PROXY", "true")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "172.16.0.2:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.5, 192.0.2.44")
+	ip := clientIP(req)
+	if ip != "192.0.2.44" {
+		t.Fatalf("expected 192.0.2.44 (rightmost XFF), got %q", ip)
+	}
+}
+
+func TestClientIP_TrustProxyEnv_InvalidRightmostFallsBackToPeer(t *testing.T) {
+	// If the rightmost XFF entry is not a valid IP the chain is untrustworthy;
+	// fall back to the proxy peer's own IP. X-Real-IP must still be ignored.
+	t.Setenv("TRUST_PROXY", "true")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "172.16.0.2:12345"
+	req.Header.Set("X-Forwarded-For", "not-an-ip")
+	req.Header.Set("X-Real-IP", "203.0.113.5")
+	ip := clientIP(req)
+	if ip != "172.16.0.2" {
+		t.Fatalf("expected 172.16.0.2 (fallback to peer), got %q", ip)
+	}
+}
+
+func TestClientIP_TrustProxyEnvDisabledByDefault(t *testing.T) {
+	// Without TRUST_PROXY, a non-loopback peer is not trusted and headers
+	// are ignored even if the environment happens to contain a spoofed one.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "172.16.0.2:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.5")
+	ip := clientIP(req)
+	if ip != "172.16.0.2" {
+		t.Fatalf("expected 172.16.0.2 (headers ignored), got %q", ip)
+	}
+}
+
+func TestRateLimiter_Middleware_TrustProxy_SpoofedLeftmostDoesNotBypass(t *testing.T) {
+	// Behind a TRUST_PROXY=true peer, rotating the spoofable leftmost XFF
+	// entry must not yield a fresh rate-limit bucket: the proxy-appended
+	// rightmost entry keys the bucket.
+	t.Setenv("TRUST_PROXY", "true")
+	rl := newRateLimiter()
+	handler := rl.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := range defaultBurst {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "172.16.0.2:12345"
+		req.Header.Set("X-Forwarded-For", "203.0.113."+strconv.Itoa(5+i)+", 192.0.2.44")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d within burst returned %d", i+1, w.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "172.16.0.2:12345"
+	req.Header.Set("X-Forwarded-For", "198.51.100.99, 192.0.2.44")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 (rotating leftmost XFF should not bypass rate limit), got %d", w.Code)
+	}
+}
+
 // --- rateLimiter ---
 
 func TestRateLimiter_AllowsWithinBurst(t *testing.T) {

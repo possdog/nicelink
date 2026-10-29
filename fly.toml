@@ -1,0 +1,52 @@
+# Fly.io configuration for nicelink.
+# Reference: https://fly.io/docs/reference/configuration/
+#
+# Persistence model: the bbolt database (link_shortener.bolt) and the server
+# secret (secret.key) both live in DATA_DIR=/data, which is a persistent
+# Fly volume mounted via [mounts] below. Volumes survive machine restarts
+# and redeploys; losing the volume (or secret.key) loses every link.
+
+app = "nicelink"
+primary_region = "iad"
+
+[build]
+  # Builds from the Dockerfile in the repo root.
+
+[env]
+  # State lives on the mounted volume, not the ephemeral machine rootfs.
+  DATA_DIR = "/data"
+  # All inbound traffic reaches the machine through Fly's edge proxy, so the
+  # rightmost X-Forwarded-For entry is the real client IP (see ratelimit.go).
+  TRUST_PROXY = "true"
+
+# Persistent volume for the bbolt DB and secret.key. bbolt holds an exclusive
+# file lock on the DB, so exactly one machine may mount it: keep
+# min/max_machines_count at 1. Scaling horizontally would give each extra
+# machine its own empty volume and a failing DB open.
+[mounts]
+  source = "nicelink_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080   # matches PORT injected by the platform / Dockerfile
+  force_https = true     # TLS is terminated at the Fly edge
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_count = 1
+  max_machines_count = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 500
+    soft_limit = 250
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

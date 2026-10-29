@@ -4,10 +4,16 @@
 
 ```bash
 go build -o nicelink ./cmd/nicelink
-./nicelink   # listens :80, optionally :443 if TLS certs present
+./nicelink   # listens :80 by default, optionally :443 if TLS certs present
 ```
 
 Requires **Go 1.22+** (uses enhanced mux patterns: `"GET /"`, `r.PathValue("alias")`).
+
+Environment variables:
+
+- `PORT` — when set, the default listen address becomes `:$PORT` (Fly.io injects `PORT=8080`; the `-port` flag still overrides it)
+- `DATA_DIR` — directory holding `link_shortener.bolt` and `secret.key` (default: working directory; `/data` on Fly.io, where the persistent volume is mounted)
+- `TRUST_PROXY` — when `true`, the rightmost `X-Forwarded-For` entry is trusted regardless of the peer address (set on Fly.io, where every inbound connection arrives via the platform's edge proxy; see Rate limiting)
 
 ## Architecture
 
@@ -16,12 +22,17 @@ Single binary, one package at `cmd/nicelink/`, split across focused source files
 ```
 cmd/nicelink/
 ├── main.go      — entry point: db init, secret loading, migration, HTTP server, graceful shutdown
-├── app.go       — shared types/constants (app struct, validation regexes, JSON response types, sentinel errors)
+├── app.go       — shared types/constants (app struct, validation regexes, JSON response types, sentinel errors, DATA_DIR paths)
 ├── crypto.go    — encryption helpers: secret management, alias hashing, key derivation, AES-256-GCM encrypt/decrypt
 ├── handlers.go  — HTTP handlers: serveIndex, handleCreate, handleRedirect, JSON helpers
 ├── ratelimit.go — per-IP rate limiting middleware (golang.org/x/time/rate)
 ├── migrate.go   — one-time migration of legacy plaintext entries to encrypted format
 └── index.html   — embedded frontend (via go:embed)
+
+Deployment files at the repo root:
+├── Dockerfile      — multi-stage build (golang:1.27-alpine → alpine:3.22); ENV PORT=8080 DATA_DIR=/data
+├── .dockerignore   — keeps *.bolt, secret.key, *.pem, .git out of the build context
+└── fly.toml        — Fly.io app config: [mounts] volume nicelink_data → /data, [http_service] internal_port 8080
 ```
 
 ### HTTP endpoints
@@ -40,6 +51,8 @@ Storage backend is **bbolt** (`link_shortener.bolt`). Neither aliases nor destin
 - The only way to recover a destination URL is to know the alias and request `GET /{alias}`
 
 Because keys are hashed and values are encrypted, a sysadmin with direct access to the `.bolt` file cannot trivially read aliases or destinations. **Losing `secret.key` makes every existing link permanently unrecoverable.**
+
+Both files live in `DATA_DIR` (working directory by default). On Fly.io, `DATA_DIR=/data` is a persistent volume, so the database and secret survive machine restarts and redeploys — but the volume is the single source of truth: never delete it, and keep scheduled snapshots enabled.
 
 Two bbolt buckets are used:
 - `"urls"` — the encrypted link mappings
@@ -64,9 +77,40 @@ Client IP extraction (`clientIP`) depends on the peer:
 
 Note for future deployments: the rightmost-entry rule is correct for exactly one trusted proxy hop. If a second proxy layer is ever added in front of the app, revisit `clientIP` (the rightmost entry would then be the middle proxy, not the client).
 
+On **Fly.io** the peer is never loopback — every inbound connection arrives through the platform's edge proxy, which appends the real client IP as the rightmost `X-Forwarded-For` entry. Setting `TRUST_PROXY=true` (done in `fly.toml`) marks any peer as trusted, which is safe there because clients cannot reach the machine except through that proxy. Without it, all clients would share the proxy's single rate-limit bucket.
+
 ### Shutdown
 
 Graceful shutdown on SIGINT/SIGTERM (5s drain).
+
+## Deployment (Fly.io)
+
+The app is deployed as the Fly app `nicelink` (region `iad`, hostname `nicelink.fly.dev`). TLS is terminated at the Fly edge (`force_https = true`), so the built-in `:443` listener stays off — the `domain.cert.pem`/`private.key.pem` files are for bare-metal use only.
+
+**Persistence.** `fly.toml` mounts the volume `nicelink_data` at `/data` and sets `DATA_DIR=/data`, so `link_shortener.bolt` and `secret.key` live on the volume and survive restarts/redeploys. bbolt holds an exclusive file lock on the DB, so the app must run as **exactly one machine**: `min_machines_count = 1`, `max_machines_count = 1`, `auto_stop_machines = "off"`. Do not raise `max_machines_count` — each extra machine gets its own empty volume and cannot open the same DB. If horizontal scaling is ever needed, migrate storage to managed Postgres (`fly mpg`) first.
+
+First-time setup (already done for `nicelink`, kept for reference):
+
+```bash
+fly apps create nicelink
+fly volumes create nicelink_data --size 1 --region iad -a nicelink --yes
+fly ips allocate-v4 -a nicelink --yes   # dedicated IPv4 ($2/mo); v6 is free
+fly deploy --remote-only
+```
+
+Day-to-day:
+
+```bash
+fly deploy --remote-only        # build + deploy from fly.toml
+fly status -a nicelink          # machine state + health checks
+fly logs -a nicelink            # app logs (rate-limit 429s appear as "WARN: rate limit exceeded")
+fly ssh sftp put link_shortener.bolt secret.key /data/   # import existing data (see below)
+fly certs add t.l.lc            # custom domain, after DNS A/AAAA records point at Fly
+```
+
+**Migrating existing data** (e.g. from a previous VPS): stop nothing, just upload both files into the volume while the machine is stopped or before first boot — `fly ssh sftp put link_shortener.bolt secret.key /data/` — then `fly machine restart`. The legacy plaintext migration runs automatically on next boot if the DB is in the old format. `secret.key` must travel with the DB or no link can be decrypted.
+
+Volumes are pinned to one region and one physical host; scheduled snapshots are enabled by default (`fly volumes snapshots list`). Losing the volume or `secret.key` loses every link permanently.
 
 ## Testing / linting
 

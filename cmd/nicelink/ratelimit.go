@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -55,10 +56,19 @@ func (rl *rateLimiter) allow(ip string) bool {
 	return rl.limiterFor(ip).Allow()
 }
 
-// isTrustedProxy reports whether the given host is a trusted reverse proxy.
-// Currently only localhost (127.0.0.1 and ::1) is trusted.
+// isTrustedProxy reports whether the given peer host is a trusted reverse
+// proxy whose forwarded headers may be honored.
+//
+// Localhost (127.0.0.1 and ::1) always qualifies — e.g. Caddy proxying on the
+// same host. On platforms like Fly.io every inbound TCP connection arrives
+// through the platform's own edge proxy (never directly from the internet),
+// so the operator opts in globally with TRUST_PROXY=true; the peer is then
+// always the trusted platform proxy regardless of its address.
 func isTrustedProxy(host string) bool {
-	return host == "127.0.0.1" || host == "::1"
+	if host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	return os.Getenv("TRUST_PROXY") == "true"
 }
 
 // validIP reports whether the given string is a valid IP address.
@@ -90,16 +100,16 @@ func (rl *rateLimiter) middleware(next http.Handler) http.Handler {
 // When the server is directly exposed to the internet (no reverse proxy),
 // r.RemoteAddr is the kernel-supplied TCP source IP and is used directly.
 //
-// When running behind a trusted reverse proxy (e.g., Caddy on localhost),
-// r.RemoteAddr will be the proxy's IP. Proxies append the address of their
-// immediate peer to the X-Forwarded-For chain, so with a single trusted hop
-// the rightmost entry is the one the trusted proxy appended and everything to
-// its left may be client-supplied and spoofable. We therefore use the rightmost
-// entry; taking the leftmost would let a client rotate fake IPs and get a
-// fresh rate-limit bucket per request. X-Real-IP is never trusted because
-// proxies do not strip a client-supplied X-Real-IP, so honoring it would
-// reintroduce the same spoof. Only localhost (127.0.0.1 and ::1) is considered
-// a trusted proxy.
+// When running behind a trusted reverse proxy (e.g., Caddy on localhost, or
+// Fly.io's edge proxy when TRUST_PROXY=true), r.RemoteAddr will be the
+// proxy's IP. Proxies append the address of their immediate peer to the
+// X-Forwarded-For chain, so with a single trusted hop the rightmost entry is
+// the one the trusted proxy appended and everything to its left may be
+// client-supplied and spoofable. We therefore use the rightmost entry; taking
+// the leftmost would let a client rotate fake IPs and get a fresh rate-limit
+// bucket per request. X-Real-IP is never trusted because proxies do not strip
+// a client-supplied X-Real-IP, so honoring it would reintroduce the same
+// spoof. A peer is trusted only if it is localhost or TRUST_PROXY=true.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

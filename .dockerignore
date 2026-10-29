@@ -1,0 +1,10 @@
+# Never ship local state or secrets into the build context.
+.git
+*.bolt
+secret.key
+*.pem
+.DS_Store
+
+# Build output
+nicelink
+tllc

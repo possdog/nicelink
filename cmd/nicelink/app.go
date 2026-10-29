@@ -3,6 +3,8 @@ package main
 import (
 	"embed"
 	"errors"
+	"os"
+	"path/filepath"
 	"regexp"
 
 	bolt "go.etcd.io/bbolt"
@@ -21,6 +23,29 @@ const (
 	migratedKey = "migrated"   // presence in metaBucket means legacy→encrypted migration is done
 	secretName  = "secret.key" // 32-byte server secret for per-alias key derivation
 )
+
+// dataDir returns the directory holding the bbolt database and the server
+// secret. It defaults to the working directory and is overridden with the
+// DATA_DIR environment variable — on Fly.io this is "/data", the mount point
+// of the persistent volume, so both files survive machine restarts and
+// redeploys. Losing the secret file makes every link unrecoverable, so it
+// must live on the same persistent storage as the database.
+func dataDir() string {
+	if d := os.Getenv("DATA_DIR"); d != "" {
+		return d
+	}
+	return "."
+}
+
+// dbPath returns the full path of the bbolt database file.
+func dbPath() string {
+	return filepath.Join(dataDir(), dbName)
+}
+
+// secretPath returns the full path of the server secret file.
+func secretPath() string {
+	return filepath.Join(dataDir(), secretName)
+}
 
 // Pre-compiled validation regexes — the same rules as the Rust original.
 //

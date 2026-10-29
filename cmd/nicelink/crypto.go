@@ -38,18 +38,18 @@ func randomAlias() string {
 
 // --- cryptographic helpers ---
 
-// loadOrCreateSecret reads the 32-byte server secret from secretName, or
+// loadOrCreateSecret reads the 32-byte server secret from secretPath(), or
 // generates a new one and persists it with 0600 permissions if the file does
 // not exist yet.  The secret is the root key from which per-alias encryption
 // keys are derived; without it no destination URL can ever be recovered.
 func loadOrCreateSecret() ([]byte, error) {
-	if data, err := os.ReadFile(secretName); err == nil {
+	if data, err := os.ReadFile(secretPath()); err == nil {
 		if len(data) != 32 {
-			return nil, fmt.Errorf("%s exists but is %d bytes (expected 32)", secretName, len(data))
+			return nil, fmt.Errorf("%s exists but is %d bytes (expected 32)", secretPath(), len(data))
 		}
 		return data, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("read %s: %w", secretName, err)
+		return nil, fmt.Errorf("read %s: %w", secretPath(), err)
 	}
 
 	// First run — generate and persist a fresh secret.
@@ -57,10 +57,10 @@ func loadOrCreateSecret() ([]byte, error) {
 	if _, err := rand.Read(secret); err != nil {
 		return nil, fmt.Errorf("generate secret: %w", err)
 	}
-	if err := os.WriteFile(secretName, secret, 0600); err != nil {
-		return nil, fmt.Errorf("write %s: %w", secretName, err)
+	if err := os.WriteFile(secretPath(), secret, 0600); err != nil {
+		return nil, fmt.Errorf("write %s: %w", secretPath(), err)
 	}
-	log.Printf("generated new server secret in %s", secretName)
+	log.Printf("generated new server secret in %s", secretPath())
 	return secret, nil
 }
 

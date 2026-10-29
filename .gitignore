@@ -5,6 +5,7 @@
 secret.key
 
 # Go build output
+/nicelink
 /tllc
 
 # Prevent accidental SSL/TLS leaks
