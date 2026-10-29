@@ -101,7 +101,7 @@ fly deploy --remote-only
 Day-to-day:
 
 ```bash
-fly deploy --remote-only        # build + deploy from fly.toml
+./deploy.sh                       # vet+test, volume guards, fly deploy, post-deploy DB checks
 fly status -a possdog-nicelink          # machine state + health checks
 fly logs -a possdog-nicelink            # app logs (rate-limit 429s appear as "WARN: rate limit exceeded")
 ./clone_database.sh            # import an existing link_shortener.bolt + secret.key into /data (see below)

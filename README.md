@@ -34,7 +34,9 @@ The app runs on Fly.io with its state on a persistent volume, so links survive r
 ```bash
 fly volumes create nicelink_data --size 1 --region iad -a possdog-nicelink --yes
 fly ips allocate-v4 -a possdog-nicelink --yes
-fly deploy --remote-only     # then verify: https://possdog-nicelink.fly.dev/
+./deploy.sh                  # vet+test, deploy, then verify: https://possdog-nicelink.fly.dev/
 ```
+
+After changing source code, run `./deploy.sh`. It refuses to deploy unless `fly.toml` still mounts the `nicelink_data` volume at `/data`, and after deploying it confirms the volume is attached and still contains `link_shortener.bolt` + `secret.key` — so the production database is left intact.
 
 Both `link_shortener.bolt` and `secret.key` live in `/data`; losing either the volume or the secret loses every link. To import an existing database, run `./clone_database.sh` from the directory containing the old `link_shortener.bolt` and `secret.key` — it resolves the machine ID via `fly status --json` + `jq`, stages each file under a `.incoming` name (flyctl sftp `put` takes one file at a time and never overwrites), swaps them in over SSH, and restarts the machine.
