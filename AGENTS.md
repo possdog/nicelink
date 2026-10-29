@@ -85,16 +85,16 @@ Graceful shutdown on SIGINT/SIGTERM (5s drain).
 
 ## Deployment (Fly.io)
 
-The app is deployed as the Fly app `nicelink` (region `iad`, hostname `nicelink.fly.dev`). TLS is terminated at the Fly edge (`force_https = true`), so the built-in `:443` listener stays off — the `domain.cert.pem`/`private.key.pem` files are for bare-metal use only.
+The app is deployed as the Fly app `possdog-nicelink` (region `iad`, hostname `possdog-nicelink.fly.dev`). The app name is namespaced to the `possdog` handle because Fly app names are global. TLS is terminated at the Fly edge (`force_https = true`), so the built-in `:443` listener stays off — the `domain.cert.pem`/`private.key.pem` files are for bare-metal use only.
 
 **Persistence.** `fly.toml` mounts the volume `nicelink_data` at `/data` and sets `DATA_DIR=/data`, so `link_shortener.bolt` and `secret.key` live on the volume and survive restarts/redeploys. bbolt holds an exclusive file lock on the DB, so the app must run as **exactly one machine**: `min_machines_count = 1`, `max_machines_count = 1`, `auto_stop_machines = "off"`. Do not raise `max_machines_count` — each extra machine gets its own empty volume and cannot open the same DB. If horizontal scaling is ever needed, migrate storage to managed Postgres (`fly mpg`) first.
 
-First-time setup (already done for `nicelink`, kept for reference):
+First-time setup (already done for `possdog-nicelink`, kept for reference):
 
 ```bash
-fly apps create nicelink
-fly volumes create nicelink_data --size 1 --region iad -a nicelink --yes
-fly ips allocate-v4 -a nicelink --yes   # dedicated IPv4 ($2/mo); v6 is free
+fly apps create possdog-nicelink
+fly volumes create nicelink_data --size 1 --region iad -a possdog-nicelink --yes
+fly ips allocate-v4 -a possdog-nicelink --yes   # dedicated IPv4 ($2/mo); v6 is free
 fly deploy --remote-only
 ```
 
@@ -102,8 +102,8 @@ Day-to-day:
 
 ```bash
 fly deploy --remote-only        # build + deploy from fly.toml
-fly status -a nicelink          # machine state + health checks
-fly logs -a nicelink            # app logs (rate-limit 429s appear as "WARN: rate limit exceeded")
+fly status -a possdog-nicelink          # machine state + health checks
+fly logs -a possdog-nicelink            # app logs (rate-limit 429s appear as "WARN: rate limit exceeded")
 fly ssh sftp put link_shortener.bolt secret.key /data/   # import existing data (see below)
 fly certs add t.l.lc            # custom domain, after DNS A/AAAA records point at Fly
 ```

@@ -6,7 +6,7 @@
 # Fly volume mounted via [mounts] below. Volumes survive machine restarts
 # and redeploys; losing the volume (or secret.key) loses every link.
 
-app = "nicelink"
+app = "possdog-nicelink"
 primary_region = "iad"
 
 [build]
