@@ -20,8 +20,8 @@ primary_region = "iad"
   TRUST_PROXY = "true"
 
 # Persistent volume for the bbolt DB and secret.key. bbolt holds an exclusive
-# file lock on the DB, so exactly one machine may mount it: keep
-# min/max_machines_count at 1. Scaling horizontally would give each extra
+# file lock on the DB, so at most one machine may have it mounted at a time:
+# keep max_machines_count at 1. Scaling horizontally would give each extra
 # machine its own empty volume and a failing DB open.
 [mounts]
   source = "nicelink_data"
@@ -30,9 +30,14 @@ primary_region = "iad"
 [http_service]
   internal_port = 8080   # matches PORT injected by the platform / Dockerfile
   force_https = true     # TLS is terminated at the Fly edge
-  auto_stop_machines = "off"
+  # Scale to zero: the proxy stops the idle machine (no compute charge while
+  # stopped) and starts it on the next request (~1.5s cold start). Safe with
+  # the bbolt lock because max_machines_count = 1 means zero or one machines
+  # running, so the volume is never mounted twice; volume data survives
+  # stop/start. Health checks affect routing only and do not keep it awake.
+  auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_count = 1
+  min_machines_count = 0
   max_machines_count = 1
 
   [http_service.concurrency]

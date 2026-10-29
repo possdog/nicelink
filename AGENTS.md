@@ -52,7 +52,7 @@ Storage backend is **bbolt** (`link_shortener.bolt`). Neither aliases nor destin
 
 Because keys are hashed and values are encrypted, a sysadmin with direct access to the `.bolt` file cannot trivially read aliases or destinations. **Losing `secret.key` makes every existing link permanently unrecoverable.**
 
-Both files live in `DATA_DIR` (working directory by default). On Fly.io, `DATA_DIR=/data` is a persistent volume, so the database and secret survive machine restarts and redeploys — but the volume is the single source of truth: never delete it, and keep scheduled snapshots enabled.
+Both files live in `DATA_DIR` (working directory by default). On Fly.io, `DATA_DIR=/data` is a persistent volume, so the database and secret survive machine restarts, redeploys, and autostop cycles — but the volume is the single source of truth: never delete it, and keep scheduled snapshots enabled.
 
 Two bbolt buckets are used:
 - `"urls"` — the encrypted link mappings
@@ -87,7 +87,9 @@ Graceful shutdown on SIGINT/SIGTERM (5s drain).
 
 The app is deployed as the Fly app `possdog-nicelink` (region `iad`, hostname `possdog-nicelink.fly.dev`). The app name is namespaced to the `possdog` handle because Fly app names are global. TLS is terminated at the Fly edge (`force_https = true`), so the built-in `:443` listener stays off — the `domain.cert.pem`/`private.key.pem` files are for bare-metal use only.
 
-**Persistence.** `fly.toml` mounts the volume `nicelink_data` at `/data` and sets `DATA_DIR=/data`, so `link_shortener.bolt` and `secret.key` live on the volume and survive restarts/redeploys. bbolt holds an exclusive file lock on the DB, so the app must run as **exactly one machine**: `min_machines_count = 1`, `max_machines_count = 1`, `auto_stop_machines = "off"`. Do not raise `max_machines_count` — each extra machine gets its own empty volume and cannot open the same DB. If horizontal scaling is ever needed, migrate storage to managed Postgres (`fly mpg`) first.
+**Persistence.** `fly.toml` mounts the volume `nicelink_data` at `/data` and sets `DATA_DIR=/data`, so `link_shortener.bolt` and `secret.key` live on the volume and survive restarts, redeploys, and machine stop/start. bbolt holds an exclusive file lock on the DB, so **at most one machine** may have the volume mounted at a time: never raise `max_machines_count` above 1 — each extra machine gets its own empty volume and cannot open the same DB. If horizontal scaling is ever needed, migrate storage to managed Postgres (`fly mpg`) first.
+
+**Scale-to-zero.** `auto_stop_machines = "stop"` with `min_machines_count = 0` lets Fly Proxy stop the machine when idle (no CPU/RAM charge while stopped; volume data is preserved) and start it again on the next request, paying a ~1.5s cold start. This is safe precisely because `max_machines_count = 1`: there are only ever zero or one running machines, so the bbolt file lock is never contended. Health checks affect routing only and do not keep the machine awake.
 
 First-time setup (already done for `possdog-nicelink`, kept for reference):
 
