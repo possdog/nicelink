@@ -44,6 +44,16 @@ for attempt in 1 2 3; do
 done
 
 echo "==> post-deploy verification"
+# With auto_stop_machines and min_machines_count = 0 the machine may be left
+# stopped/suspended by the deploy, so wake it with a real request first —
+# autostart boots it and proves the edge-to-app path end to end.
+for i in $(seq 1 24); do
+	curl -sf -o /dev/null "https://$APP.fly.dev/" && break
+	sleep 5
+done
+curl -sf -o /dev/null "https://$APP.fly.dev/" || { echo "error: https://$APP.fly.dev/ not responding (autostart wake failed)" >&2; exit 1; }
+echo "    https://$APP.fly.dev/ responds 200 (machine woke from autostop)"
+
 # The app machine must be started with at least one passing health check.
 MACHINE_ID=""
 for i in $(seq 1 18); do
@@ -71,13 +81,5 @@ echo "$LS_OUT" | grep -q link_shortener.bolt || { echo "error: /data/link_shorte
 echo "$LS_OUT" | grep -q secret.key || { echo "error: /data/secret.key missing — secret not intact" >&2; exit 1; }
 echo "    volume attached to $MACHINE_ID; /data contents:"
 echo "$LS_OUT" | sed 's/^/      /'
-
-# The app must answer over HTTPS.
-for i in $(seq 1 12); do
-	curl -sf -o /dev/null "https://$APP.fly.dev/" && break
-	sleep 5
-done
-curl -sf -o /dev/null "https://$APP.fly.dev/" || { echo "error: https://$APP.fly.dev/ not responding" >&2; exit 1; }
-echo "    https://$APP.fly.dev/ responds 200"
 
 echo "==> deployed; production database on volume $VOLUME untouched"

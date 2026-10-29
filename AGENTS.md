@@ -89,7 +89,7 @@ The app is deployed as the Fly app `possdog-nicelink` (region `iad`, hostname `p
 
 **Persistence.** `fly.toml` mounts the volume `nicelink_data` at `/data` and sets `DATA_DIR=/data`, so `link_shortener.bolt` and `secret.key` live on the volume and survive restarts, redeploys, and machine stop/start. bbolt holds an exclusive file lock on the DB, so **at most one machine** may have the volume mounted at a time: never raise `max_machines_count` above 1 — each extra machine gets its own empty volume and cannot open the same DB. If horizontal scaling is ever needed, migrate storage to managed Postgres (`fly mpg`) first.
 
-**Scale-to-zero.** `auto_stop_machines = "stop"` with `min_machines_count = 0` lets Fly Proxy stop the machine when idle (no CPU/RAM charge while stopped; volume data is preserved) and start it again on the next request, paying a ~1.5s cold start. This is safe precisely because `max_machines_count = 1`: there are only ever zero or one running machines, so the bbolt file lock is never contended. Health checks affect routing only and do not keep the machine awake.
+**Scale-to-zero.** `auto_stop_machines = "suspend"` with `min_machines_count = 0` lets Fly Proxy suspend the machine when idle (no CPU/RAM charge while suspended; volume data is preserved) and resume it on the next request — a few hundred ms when the memory snapshot survives, otherwise a ~1.5s cold start (suspend is not durable: deploys, host migration, or capacity pressure can discard the snapshot, with no flag distinguishing the two). This is safe precisely because `max_machines_count = 1`: there are only ever zero or one running machines, so the bbolt file lock is never contended. Suspend's usual caveats (clock skew for a second or two after resume, a few lost log lines) are harmless for this app — no JWTs, cron, caches, or in-app TLS, since TLS terminates at the Fly edge. Health checks affect routing only and do not keep the machine awake.
 
 First-time setup (already done for `possdog-nicelink`, kept for reference):
 
@@ -103,7 +103,7 @@ fly deploy --remote-only
 Day-to-day:
 
 ```bash
-./deploy.sh                       # vet+test, volume guards, fly deploy, post-deploy DB checks
+./deploy.sh                       # vet+test, volume guards, fly deploy, wakes the autostopped machine, post-deploy DB checks
 fly status -a possdog-nicelink          # machine state + health checks
 fly logs -a possdog-nicelink            # app logs (rate-limit 429s appear as "WARN: rate limit exceeded")
 ./clone_database.sh            # import an existing link_shortener.bolt + secret.key into /data (see below)
