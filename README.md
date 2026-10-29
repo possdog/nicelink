@@ -37,4 +37,12 @@ fly ips allocate-v4 -a possdog-nicelink --yes
 fly deploy --remote-only     # then verify: https://possdog-nicelink.fly.dev/
 ```
 
-Both `link_shortener.bolt` and `secret.key` live in `/data`; losing either the volume or the secret loses every link. To import an existing database, upload both files to `/data` (e.g. `fly ssh sftp put link_shortener.bolt secret.key /data/`) before starting the machine.
+Both `link_shortener.bolt` and `secret.key` live in `/data`; losing either the volume or the secret loses every link. To import an existing database, upload each file to a fresh name and swap it in (flyctl sftp `put` takes one file at a time and never overwrites), then restart the machine:
+
+```bash
+fly ssh sftp put link_shortener.bolt /data/link_shortener.bolt.incoming -a possdog-nicelink
+fly ssh sftp put secret.key /data/secret.key.incoming -a possdog-nicelink
+fly ssh console -C "mv /data/link_shortener.bolt.incoming /data/link_shortener.bolt" -a possdog-nicelink
+fly ssh console -C "mv /data/secret.key.incoming /data/secret.key" -a possdog-nicelink
+fly machine restart <machine-id> -a possdog-nicelink
+```
